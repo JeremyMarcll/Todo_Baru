@@ -1,144 +1,396 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="id">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Todo List</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todo List - Terpisah</title>
 
-    <!-- Bootstrap v5.3.7 -->
+    <!-- Bootstrap v5.3.7 (CSS only) -->
     <link
       rel="stylesheet"
       href="/assets/vendor/bootstrap-5.3.7/package/dist/css/bootstrap.min.css"
     />
-    <!-- Bootstrap Icons. -->
+    <!-- Bootstrap Icons -->
     <link
       rel="stylesheet"
       href="/assets/vendor/bootstrap-icons-1.13.1/package/font/bootstrap-icons.min.css"
     />
+
+    <style>
+      /* Sedikit gaya untuk handle drag */
+      .dragging {
+        opacity: 0.5;
+      }
+      .drag-over {
+        border-top: 2px dashed #0d6efd;
+      }
+      /* Pastikan tombol kecil rapi */
+      .todo-actions button { margin-left: 6px; }
+      .search-filter-row { gap: 8px; }
+    </style>
   </head>
-  <body>
-   
 
-        <h1>Todo List</h1>
+  <body class="bg-light">
+    <div class="container py-4">
+      <div class="row justify-content-center">
+        <div class="col-md-8">
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <h3 class="card-title mb-3">Todo List</h3>
 
-        <hr />
-        <!-- Form -->
-        <form id="formData">
-          <div class="mb-3">
-            <label for="text" class="form-label">
-              Apa rencana kamu selanjutnya?
-            </label>
-            <div class="input-group flex-nowrap">
-              <input type="text" class="form-control" name="todo" />
-              <button type="submit" class="btn btn-primary">
-                <i class="bi bi-plus"></i> Tambah
-              </button>
+              <!-- Form tambah -->
+              <form id="formData" class="mb-3" autocomplete="off">
+                <label for="todoInput" class="form-label">Apa rencana kamu selanjutnya?</label>
+                <div class="input-group">
+                  <input id="todoInput" name="todo" type="text" class="form-control" placeholder="Tulis todo..." />
+                  <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-plus"></i> Tambah
+                  </button>
+                </div>
+              </form>
+
+              <!-- Bar pencarian + filter -->
+              <div class="d-flex flex-column flex-sm-row justify-content-between mb-3 search-filter-row">
+                <div class="input-group mb-2 mb-sm-0">
+                  <span class="input-group-text"><i class="bi bi-search"></i></span>
+                  <input id="searchInput" class="form-control" placeholder="Cari todo..." />
+                </div>
+
+                <div class="btn-group" role="group" aria-label="Filter todo">
+                  <button type="button" class="btn btn-outline-secondary active" data-filter="all">Semua</button>
+                  <button type="button" class="btn btn-outline-secondary" data-filter="pending">Belum Selesai</button>
+                  <button type="button" class="btn btn-outline-secondary" data-filter="completed">Selesai</button>
+                </div>
+              </div>
+
+              <!-- List -->
+              <ul class="list-group" id="todoList" aria-live="polite"></ul>
+
+              <!-- Info kosong -->
+              <p id="emptyInfo" class="mt-3 text-muted small" style="display:none;">
+                Tidak ada todo yang sesuai.
+              </p>
             </div>
           </div>
-        </form>
-
-        <ul class="list-group" id="todoList">
-          <li class="list-group-item d-flex">
-            <div class="flex-fill">
-              <input class="form-check-input me-1" type="checkbox" value="" />
-              <label class="form-check-label">Ini Label</label>
-            </div>
-            <div>
-              <button class="btn btn-sm btn-outline-danger">
-                <i class="bi bi-trash"></i>
-              </button>
-            </div>
-          </li>
-        </ul>
+        </div>
       </div>
     </div>
 
     <script>
+      // State
       let todos = [];
+      let currentFilter = "all"; // "all" | "completed" | "pending"
+      let searchQuery = "";
 
+      // Drag state
+      let dragSrcIndex = null;
+
+      // Helpers
+      function saveTodos() {
+        localStorage.setItem("todos", JSON.stringify(todos));
+      }
+
+      function loadTodos() {
+        const stored = localStorage.getItem("todos");
+        if (stored) {
+          try {
+            todos = JSON.parse(stored);
+          } catch (e) {
+            todos = [];
+          }
+        }
+      }
+
+      function normalizeTitle(str) {
+        return (str || "").trim().toLowerCase();
+      }
+
+      function isDuplicateTitle(title, exceptIndex = -1) {
+        const n = normalizeTitle(title);
+        if (!n) return false;
+        return todos.some((t, i) => i !== exceptIndex && normalizeTitle(t.todo) === n);
+      }
+
+      // Render with filter & search
       function renderTodos() {
-        const todoList = document.getElementById("todoList");
-        todoList.innerHTML = ""; // Kosongkan daftar todo
+        const listEl = document.getElementById("todoList");
+        listEl.innerHTML = "";
 
-        todos.forEach((item, index) => {
+        // Apply filter
+        let filtered = todos.filter((t) => {
+          if (currentFilter === "completed") return t.completed;
+          if (currentFilter === "pending") return !t.completed;
+          return true;
+        });
+
+        // Apply search (case-insensitive) while respecting filter
+        if (searchQuery.trim() !== "") {
+          const q = searchQuery.trim().toLowerCase();
+          filtered = filtered.filter((t) => t.todo.toLowerCase().includes(q));
+        }
+
+        if (filtered.length === 0) {
+          document.getElementById("emptyInfo").style.display = "block";
+        } else {
+          document.getElementById("emptyInfo").style.display = "none";
+        }
+
+        // Build list items (maintain original indexes for operations)
+        filtered.forEach((item) => {
+          // find index in original todos
+          const index = todos.indexOf(item);
           const li = document.createElement("li");
-          li.className = "list-group-item d-flex";
+          li.className = "list-group-item d-flex align-items-center";
+          li.setAttribute("draggable", "true");
+          li.dataset.index = index;
 
-          const div = document.createElement("div");
-          div.className = "flex-fill";
+          // Left: checkbox + label or input(editing)
+          const left = document.createElement("div");
+          left.className = "flex-fill d-flex align-items-center";
 
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
-          checkbox.className = "form-check-input me-1";
+          checkbox.className = "form-check-input me-2";
           checkbox.checked = item.completed;
+          checkbox.setAttribute("aria-label", "Tandai selesai");
+
           checkbox.addEventListener("change", () => {
             item.completed = checkbox.checked;
-            renderTodos(); // Render ulang daftar todo
+            saveTodos();
+            renderTodos();
           });
 
-          const label = document.createElement("label");
-          label.className = "form-check-label";
-
+          const label = document.createElement("span");
+          label.className = "me-2";
+          label.style.userSelect = "none";
+          label.textContent = item.todo;
           if (item.completed) {
             label.style.textDecoration = "line-through";
+            label.classList.add("text-muted");
           } else {
             label.style.textDecoration = "none";
+            label.classList.remove("text-muted");
           }
-          label.textContent = item.todo;
 
-          div.appendChild(checkbox);
-          div.appendChild(label);
+          left.appendChild(checkbox);
+          left.appendChild(label);
 
-          const button = document.createElement("button");
-          button.className = "btn btn-sm btn-outline-danger";
-          button.innerHTML = '<i class="bi bi-trash"></i>';
-          button.addEventListener("click", () => {
-            todos.splice(index, 1); // Hapus todo dari array
-            renderTodos(); // Render ulang daftar todo
+          // Right: action buttons (Edit, Delete, drag handle)
+          const actions = document.createElement("div");
+          actions.className = "todo-actions";
+
+          // Edit button
+          const editBtn = document.createElement("button");
+          editBtn.type = "button";
+          editBtn.className = "btn btn-sm btn-outline-secondary";
+          editBtn.title = "Edit";
+          editBtn.innerHTML = '<i class="bi bi-pencil"></i>';
+          editBtn.addEventListener("click", () => startEdit(index, label, li, item));
+
+          // Delete button
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "btn btn-sm btn-outline-danger";
+          delBtn.title = "Hapus";
+          delBtn.innerHTML = '<i class="bi bi-trash"></i>';
+          delBtn.addEventListener("click", () => {
+            if (confirm('Hapus todo: "' + item.todo + '" ?')) {
+              todos.splice(index, 1);
+              saveTodos();
+              renderTodos();
+            }
           });
 
-          li.appendChild(div);
-          li.appendChild(button);
-          todoList.appendChild(li);
+          // Drag handle (visual)
+          const dragHandle = document.createElement("span");
+          dragHandle.className = "btn btn-sm btn-outline-dark ms-1";
+          dragHandle.style.cursor = "grab";
+          dragHandle.title = "Tarik untuk memindahkan";
+          dragHandle.innerHTML = '<i class="bi bi-arrows-move"></i>';
+          // (no extra logic here; li is draggable)
+
+          actions.appendChild(editBtn);
+          actions.appendChild(delBtn);
+          actions.appendChild(dragHandle);
+
+          li.appendChild(left);
+          li.appendChild(actions);
+
+          // Drag event listeners (HTML5)
+          li.addEventListener("dragstart", (e) => {
+            dragSrcIndex = Number(li.dataset.index);
+            li.classList.add("dragging");
+            // set dataTransfer for Firefox support
+            e.dataTransfer.setData("text/plain", String(dragSrcIndex));
+            e.dataTransfer.effectAllowed = "move";
+          });
+          li.addEventListener("dragend", () => {
+            dragSrcIndex = null;
+            document.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+            document.querySelectorAll(".drag-over").forEach((el) => el.classList.remove("drag-over"));
+          });
+
+          li.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            // add visual
+            li.classList.add("drag-over");
+            e.dataTransfer.dropEffect = "move";
+          });
+
+          li.addEventListener("dragleave", () => {
+            li.classList.remove("drag-over");
+          });
+
+          li.addEventListener("drop", (e) => {
+            e.preventDefault();
+            li.classList.remove("drag-over");
+            const destIndex = Number(li.dataset.index);
+            // If dragSrcIndex is null (older browsers), try from dataTransfer
+            const src = dragSrcIndex !== null ? dragSrcIndex : Number(e.dataTransfer.getData("text/plain"));
+            if (isNaN(src) || isNaN(destIndex)) return;
+            if (src === destIndex) return;
+
+            // Move item from src to the position of destIndex.
+            // To keep order intuitive, insert before destIndex if src > destIndex, else after destIndex.
+            const item = todos.splice(src, 1)[0];
+
+            // If src < destIndex, after removing src, destIndex reduces by 1
+            let insertAt = destIndex;
+            if (src < destIndex) insertAt = destIndex; // after removal, destIndex already points to correct place
+            // Insert at insertAt
+            todos.splice(insertAt, 0, item);
+
+            saveTodos();
+            renderTodos();
+          });
+
+          listEl.appendChild(li);
         });
       }
 
-      document.addEventListener("DOMContentLoaded", function () {
+      // Inline edit logic
+      function startEdit(index, labelEl, liEl, itemObj) {
+        // If an edit is already open, abort it by re-rendering
+        // Create input and buttons replacing label
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "form-control form-control-sm me-2";
+        input.value = itemObj.todo;
+        input.setAttribute("aria-label", "Edit todo");
+        input.style.maxWidth = "60%";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "btn btn-sm btn-primary me-1";
+        saveBtn.textContent = "Save";
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "btn btn-sm btn-outline-secondary";
+        cancelBtn.textContent = "Cancel";
+
+        // Replace label with input + buttons (left area)
+        const left = liEl.querySelector(".flex-fill");
+        left.innerHTML = ""; // clear
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "form-check-input me-2";
+        checkbox.checked = itemObj.completed;
+        checkbox.addEventListener("change", () => {
+          itemObj.completed = checkbox.checked;
+          saveTodos();
+        });
+        left.appendChild(checkbox);
+        left.appendChild(input);
+        left.appendChild(saveBtn);
+        left.appendChild(cancelBtn);
+
+        input.focus();
+        input.select();
+
+        saveBtn.addEventListener("click", () => {
+          const newTitle = input.value.trim();
+          if (newTitle === "") {
+            alert("Judul todo tidak boleh kosong.");
+            input.focus();
+            return;
+          }
+          if (isDuplicateTitle(newTitle, index)) {
+            alert("Judul todo sudah ada. Gunakan judul lain.");
+            input.focus();
+            return;
+          }
+          // commit change
+          itemObj.todo = newTitle;
+          saveTodos();
+          renderTodos();
+        });
+
+        cancelBtn.addEventListener("click", () => {
+          renderTodos();
+        });
+
+        // allow Enter to save, Esc to cancel
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            saveBtn.click();
+          } else if (e.key === "Escape") {
+            cancelBtn.click();
+          }
+        });
+      }
+
+      // Initial setup
+      document.addEventListener("DOMContentLoaded", () => {
         const form = document.getElementById("formData");
-        const todoList = document.getElementById("todoList");
+        const todoInput = document.getElementById("todoInput");
+        const searchInput = document.getElementById("searchInput");
+        const filterButtons = document.querySelectorAll('[data-filter]');
 
-        // muat todos dari localStorage
-        const storedTodos = localStorage.getItem("todos");
-        if (storedTodos) {
-          todos = JSON.parse(storedTodos);
-        }
+        loadTodos();
+        renderTodos();
 
-        form.addEventListener("submit", function (event) {
-          event.preventDefault();
-          const todoInput = form.todo.value.trim();
-
-          if (todoInput === "") {
+        // Add todo
+        form.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const val = todoInput.value.trim();
+          if (val === "") {
             alert("Todo tidak boleh kosong!");
             return;
           }
-
-          // Tambahkan todo baru ke array todos pada posisi awal
-          todos.unshift({
-            todo: todoInput,
-            completed: false,
-          });
-
-          form.todo.value = ""; // Kosongkan input setelah submit
-
-          renderTodos(); // Render ulang daftar todo
+          if (isDuplicateTitle(val)) {
+            alert("Todo dengan judul yang sama sudah ada!");
+            return;
+          }
+          // add to beginning to match permintaan awal (tampilkan terbaru di atas)
+          todos.unshift({ todo: val, completed: false });
+          saveTodos();
+          todoInput.value = "";
+          renderTodos();
         });
 
-        renderTodos(); // Render daftar todo saat halaman dimuat
-      });
+        // Filter buttons
+        filterButtons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            filterButtons.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            currentFilter = btn.dataset.filter;
+            renderTodos();
+          });
+        });
 
-      // Simpan todos ke localStorage saat halaman ditutup
-      window.addEventListener("beforeunload", () => {
-        localStorage.setItem("todos", JSON.stringify(todos));
+        // Search input (debounce minimal)
+        let searchTimer = null;
+        searchInput.addEventListener("input", (e) => {
+          clearTimeout(searchTimer);
+          searchTimer = setTimeout(() => {
+            searchQuery = e.target.value;
+            renderTodos();
+          }, 150);
+        });
+
+        // Save on unload (also saved in operations, but keep this as safety)
+        window.addEventListener("beforeunload", () => {
+          saveTodos();
+        });
       });
     </script>
   </body>
